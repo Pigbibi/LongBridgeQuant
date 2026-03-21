@@ -41,7 +41,7 @@ def get_project_id():
     try:
         _, project_id = google.auth.default()
         return project_id
-    except:
+    except Exception:
         return os.getenv("GOOGLE_CLOUD_PROJECT")
 
 PROJECT_ID = get_project_id()
@@ -55,6 +55,18 @@ TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 CASH_RESERVE_RATIO = 0.03
 MIN_TRADE_RATIO = 0.01
 MIN_TRADE_FLOOR = 100.0
+REBALANCE_THRESHOLD_RATIO = 0.01          # 1% of equity to trigger rebalance
+
+# Order pricing: limit order discount/premium relative to last price
+LIMIT_SELL_DISCOUNT = 0.995               # sell limit at 0.5% below last
+LIMIT_BUY_PREMIUM = 1.005                 # buy limit at 0.5% above last
+
+# Order monitoring: poll interval and max attempts for fill check
+ORDER_POLL_INTERVAL_SEC = 1
+ORDER_POLL_MAX_ATTEMPTS = 8
+
+# Token refresh: days before expiry to trigger refresh
+TOKEN_REFRESH_THRESHOLD_DAYS = 30
 
 # Trading layer: SOXL 150d MA for trend; deploy ratio by account size, log decay above 180k
 TREND_MA_WINDOW = 150
@@ -80,7 +92,8 @@ def send_tg_message(message):
         prefixed = with_prefix(message)
         print(f"TG:\n{prefixed}", flush=True)
         requests.post(url, json={"chat_id": TG_CHAT_ID, "text": prefixed}, timeout=10)
-    except: pass
+    except Exception as e:
+        print(f"Telegram send failed: {e}", flush=True)
 
 def notify_issue(title, detail):
     """Log and send to Telegram (alerts for order/API failures)."""
@@ -107,6 +120,18 @@ def send_order_status_message(title, symbol, side_text, quantity, order_id, stat
     )
 
 
+def safe_quote_last_price(q_ctx, symbol):
+    """Get last done price for a symbol; returns None if quote unavailable."""
+    try:
+        quotes = q_ctx.quote([symbol])
+        if not quotes:
+            notify_issue("Quote empty", f"No quote data for {symbol}")
+            return None
+        return float(quotes[0].last_done)
+    except Exception as e:
+        notify_issue("Quote failed", f"Symbol: {symbol}\n{e}")
+        return None
+
 def estimate_cash_buy_quantity(t_ctx, symbol, order_type, ref_price):
     """Max buy quantity by cash; ref_price required even for market orders. Returns None on error."""
     try:
@@ -131,8 +156,8 @@ def monitor_submitted_order_status(t_ctx, symbol, side_text, quantity, order_id)
         return
 
     try:
-        for _ in range(8):
-            time.sleep(1)
+        for _ in range(ORDER_POLL_MAX_ATTEMPTS):
+            time.sleep(ORDER_POLL_INTERVAL_SEC)
             resp = t_ctx.today_orders(order_id=order_id)
             orders = getattr(resp, "orders", None) or []
             if not orders:
@@ -267,7 +292,7 @@ def refresh_token_logic(current_token):
             padded_payload = payload_b64 + '=' * (-len(payload_b64) % 4)
             payload = json.loads(base64.urlsafe_b64decode(padded_payload).decode('utf-8'))
             
-            if (payload.get('exp', 0) - time.time()) / 86400 > 30: 
+            if (payload.get('exp', 0) - time.time()) / 86400 > TOKEN_REFRESH_THRESHOLD_DAYS:
                 return current_token
         
         print(with_prefix("Token expiry < 30 days; refreshing..."), flush=True)
@@ -362,8 +387,13 @@ def run_strategy():
         print(with_prefix(f"[{datetime.now()}] Starting strategy..."), flush=True)
 
         token = refresh_token_logic(fetch_token_strict())
-        os.environ["LONGPORT_ACCESS_TOKEN"] = token
-        config = Config.from_env()
+        app_key = os.getenv("LONGPORT_APP_KEY", "")
+        app_secret = os.getenv("LONGPORT_APP_SECRET", "")
+        config = Config(
+            app_key=app_key,
+            app_secret=app_secret,
+            access_token=token,
+        )
         q_ctx, t_ctx = QuoteContext(config), TradeContext(config)
 
         # Skip if outside NYSE regular session
@@ -372,7 +402,9 @@ def run_strategy():
             now_utc = datetime.now(pytz.utc)
             schedule = nyse.schedule(start_date=now_utc, end_date=now_utc)
             is_normal = False if schedule.empty else nyse.open_at_time(schedule, now_utc)
-        except: is_normal = False
+        except Exception as e:
+            print(with_prefix(f"Market hours check failed: {e}"), flush=True)
+            is_normal = False
 
         if not is_normal:
             print(with_prefix("Outside market hours; skip."), flush=True)
@@ -402,7 +434,9 @@ def run_strategy():
                     sym = getattr(p, 'symbol', '')
                     root_symbol = sym.split('.')[0]
                     if root_symbol in strategy_assets:
-                        last_p = float(q_ctx.quote([sym])[0].last_done)
+                        last_p = safe_quote_last_price(q_ctx, sym)
+                        if last_p is None:
+                            continue
                         q = int(getattr(p, 'quantity', 0))
                         aq = int(getattr(p, 'available_quantity', q))
                         mv[root_symbol] += q * last_p
@@ -450,12 +484,14 @@ def run_strategy():
         # Sell loop: reduce overweight positions (limit for SOXL/SOXX/QQQI/SPYI, market for BOXX)
         for k in strategy_assets:
             diff = targets[k] - mv[k]
-            if diff < -(total_strategy_equity * 0.01) and abs(diff) > current_min_trade:
-                p = float(q_ctx.quote([f"{k}.US"])[0].last_done)
+            if diff < -(total_strategy_equity * REBALANCE_THRESHOLD_RATIO) and abs(diff) > current_min_trade:
+                p = safe_quote_last_price(q_ctx, f"{k}.US")
+                if p is None:
+                    continue
                 q_sell = min(int(abs(diff) // p), sellable_qty[k])
                 if q_sell > 0:
                     if k in ["SOXL", "SOXX", "QQQI", "SPYI"]:
-                        lp = round(p * 0.995, 2)
+                        lp = round(p * LIMIT_SELL_DISCOUNT, 2)
                         submitted = submit_order_with_alert(
                             t_ctx,
                             f"{k}.US",
@@ -489,13 +525,15 @@ def run_strategy():
         investable_cash = max(0, available_cash - (total_strategy_equity * CASH_RESERVE_RATIO))
         for k in strategy_assets:
             diff = targets[k] - mv[k]
-            if diff > (total_strategy_equity * 0.01) and abs(diff) > current_min_trade:
-                p = float(q_ctx.quote([f"{k}.US"])[0].last_done)
+            if diff > (total_strategy_equity * REBALANCE_THRESHOLD_RATIO) and abs(diff) > current_min_trade:
+                p = safe_quote_last_price(q_ctx, f"{k}.US")
+                if p is None:
+                    continue
                 can_buy_val = min(diff, investable_cash)
                 if can_buy_val > p:
                     is_limit_order = k in ["SOXL", "SOXX", "QQQI", "SPYI"]
                     order_type = OrderType.LO if is_limit_order else OrderType.MO
-                    ref_price = round(p * 1.005, 2) if is_limit_order else round(p, 2)
+                    ref_price = round(p * LIMIT_BUY_PREMIUM, 2) if is_limit_order else round(p, 2)
                     budget_price = ref_price if is_limit_order else p
                     q_buy_budget = int(can_buy_val // budget_price)
                     q_buy_cash_limit = estimate_cash_buy_quantity(t_ctx, f"{k}.US", order_type, ref_price)
