@@ -194,7 +194,7 @@ class LongBridgeBrokerAdapters:
                 str(order_intent.symbol),
                 order_kind=str(order_intent.order_type),
                 side=str(order_intent.side),
-                quantity=int(order_intent.quantity),
+                quantity=float(order_intent.quantity),
                 submitted_price=order_intent.limit_price,
             )
         )

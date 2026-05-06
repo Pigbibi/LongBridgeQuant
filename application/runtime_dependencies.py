@@ -20,6 +20,8 @@ class LongBridgeRebalanceConfig:
     dry_run_only: bool = False
     post_sell_refresh_attempts: int = 1
     post_sell_refresh_interval_sec: float = 0.0
+    quantity_step: float = 1.0
+    min_order_notional: float = 0.0
     sleeper: Callable[[float], None] | None = None
 
 
@@ -28,7 +30,7 @@ class LongBridgeRebalanceRuntime:
     bootstrap: Callable[[], tuple[Any, Any, Any]]
     resolve_rebalance_plan: Callable[..., dict[str, Any]]
     market_data_port_factory: Callable[[Any], MarketDataPort]
-    estimate_max_purchase_quantity: Callable[..., int]
+    estimate_max_purchase_quantity: Callable[..., float]
     notifications: NotificationPort
     notify_issue: Callable[[str, str], None]
     portfolio_port_factory: Callable[[Any, Any], PortfolioPort]

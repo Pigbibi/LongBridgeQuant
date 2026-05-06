@@ -35,10 +35,12 @@ class LongBridgeRuntimeComposer:
     limit_buy_premium: float
     order_poll_interval_sec: int
     order_poll_max_attempts: int
+    quantity_step: float
+    min_order_notional: float
     dry_run_only: bool = False
     broker_adapters: Any = None
     strategy_adapters: Any = None
-    estimate_max_purchase_quantity_fn: Callable[..., int] | None = None
+    estimate_max_purchase_quantity_fn: Callable[..., float] | None = None
     fetch_order_status_fn: Callable[..., Any] | None = None
     fetch_token_from_secret_fn: Callable[..., str] | None = None
     refresh_token_if_needed_fn: Callable[..., str] | None = None
@@ -168,6 +170,8 @@ class LongBridgeRuntimeComposer:
             dry_run_only=self.dry_run_only,
             post_sell_refresh_attempts=self.order_poll_max_attempts,
             post_sell_refresh_interval_sec=self.order_poll_interval_sec,
+            quantity_step=self.quantity_step,
+            min_order_notional=self.min_order_notional,
             sleeper=self.sleeper,
         )
 
@@ -194,10 +198,12 @@ def build_runtime_composer(
     limit_buy_premium: float,
     order_poll_interval_sec: int,
     order_poll_max_attempts: int,
+    quantity_step: float,
+    min_order_notional: float,
     dry_run_only: bool,
     broker_adapters: Any,
     strategy_adapters: Any,
-    estimate_max_purchase_quantity_fn: Callable[..., int],
+    estimate_max_purchase_quantity_fn: Callable[..., float],
     fetch_order_status_fn: Callable[..., Any],
     fetch_token_from_secret_fn: Callable[..., str],
     refresh_token_if_needed_fn: Callable[..., str],
@@ -233,6 +239,8 @@ def build_runtime_composer(
         limit_buy_premium=float(limit_buy_premium),
         order_poll_interval_sec=int(order_poll_interval_sec),
         order_poll_max_attempts=int(order_poll_max_attempts),
+        quantity_step=float(quantity_step),
+        min_order_notional=float(min_order_notional),
         dry_run_only=bool(dry_run_only),
         broker_adapters=broker_adapters,
         strategy_adapters=strategy_adapters,
