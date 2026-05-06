@@ -13,6 +13,7 @@ from notifications.order_alerts import (
     publish_order_lifecycle_event,
 )
 from notifications.telegram import build_issue_notifier
+from quant_platform_kit.common.quantity import format_quantity
 from quant_platform_kit.common.port_adapters import CallableNotificationPort
 from quant_platform_kit.common.ports import NotificationPort
 
@@ -69,7 +70,7 @@ def build_runtime_notification_adapters(
             trade_context,
             str(order_intent.symbol),
             "Buy" if str(order_intent.side).lower() == "buy" else "Sell",
-            int(order_intent.quantity),
+            format_quantity(order_intent.quantity),
             report.broker_order_id or "",
             fetch_order_status=fetch_order_status,
             order_poll_interval_sec=order_poll_interval_sec,

@@ -13,7 +13,7 @@ from notifications.events import NotificationPublisher, RenderedNotification
 class OrderLifecycleEvent:
     symbol: str
     side_text: str
-    quantity: int | str
+    quantity: float | int | str
     order_id: str
     status: str
     executed_qty: str = "0"

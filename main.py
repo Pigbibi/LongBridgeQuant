@@ -99,6 +99,12 @@ strategy_display_name = build_strategy_display_name(t)(
     STRATEGY_PROFILE,
     fallback_name=STRATEGY_DISPLAY_NAME,
 )
+
+
+def log_position_snapshot(message):
+    print(f"[{ACCOUNT_REGION}] {message}", flush=True)
+
+
 BROKER_ADAPTERS = build_runtime_broker_adapters(
     strategy_symbols=tuple(MANAGED_SYMBOLS),
     account_hash=ACCOUNT_PREFIX or ACCOUNT_REGION or "longbridge",
@@ -107,6 +113,11 @@ BROKER_ADAPTERS = build_runtime_broker_adapters(
         quote_context,
         trade_context,
         list(MANAGED_SYMBOLS),
+        position_log_fn=(
+            log_position_snapshot
+            if getattr(RUNTIME_SETTINGS, "debug_position_snapshot", False)
+            else None
+        ),
     ),
     submit_order_fn=submit_order,
 )
@@ -147,6 +158,8 @@ def build_composer():
         limit_buy_premium=LIMIT_BUY_PREMIUM,
         order_poll_interval_sec=ORDER_POLL_INTERVAL_SEC,
         order_poll_max_attempts=ORDER_POLL_MAX_ATTEMPTS,
+        quantity_step=getattr(RUNTIME_SETTINGS, "quantity_step", 1.0),
+        min_order_notional=getattr(RUNTIME_SETTINGS, "min_order_notional", 0.0),
         dry_run_only=RUNTIME_SETTINGS.dry_run_only,
         broker_adapters=BROKER_ADAPTERS,
         strategy_adapters=STRATEGY_ADAPTERS,

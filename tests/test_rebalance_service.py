@@ -400,6 +400,8 @@ class RebalanceServiceNotificationTests(unittest.TestCase):
         dry_run_only=False,
         strategy_display_name="SOXL/SOXX 半导体趋势收益",
         post_sell_refresh_attempts=1,
+        quantity_step=1.0,
+        min_order_notional=0.0,
     ):
         sent_messages = []
         observed_snapshots = []
@@ -471,6 +473,8 @@ class RebalanceServiceNotificationTests(unittest.TestCase):
                 dry_run_only=dry_run_only,
                 post_sell_refresh_attempts=post_sell_refresh_attempts,
                 post_sell_refresh_interval_sec=0.0,
+                quantity_step=quantity_step,
+                min_order_notional=min_order_notional,
                 sleeper=observed_sleeps.append,
             ),
         )
@@ -542,6 +546,73 @@ class RebalanceServiceNotificationTests(unittest.TestCase):
         self.assertIn("说明", sent_messages[0])
         self.assertIn("可投资现金", sent_messages[0])
         self.assertIn("SOXX.US", sent_messages[0])
+
+    def test_fractional_quantity_step_allows_small_soxx_target_buy(self):
+        plan = _build_plan(
+            strategy_symbols=("SOXL", "SOXX", "BOXX"),
+            risk_symbols=("SOXL", "SOXX"),
+            safe_haven_symbols=("BOXX",),
+            targets={"SOXL": 0.0, "SOXX": 163.14, "BOXX": 924.46},
+            market_values={"SOXL": 0.0, "SOXX": 0.0, "BOXX": 699.54},
+            sellable_quantities={"SOXL": 0, "SOXX": 0, "BOXX": 6},
+            quantities={"SOXL": 0, "SOXX": 0, "BOXX": 6},
+            current_min_trade=100.0,
+            trade_threshold_value=100.0,
+            investable_cash=891.03,
+            market_status="🧯 过热降档（SOXX）",
+            deploy_ratio_text="15.0%",
+            income_ratio_text="0.0%",
+            income_locked_ratio_text="0.0%",
+            signal_message="SOXX 目标仓位 15.0%",
+            available_cash=923.66,
+            total_strategy_equity=1087.60,
+            portfolio_rows=(("SOXL", "SOXX"), ("BOXX",)),
+        )
+
+        sent_messages, _, _ = self._run_strategy(
+            plan,
+            prices={"SOXX.US": 504.60, "SOXL.US": 162.93, "BOXX.US": 116.59},
+            estimate_max_purchase_quantity_value=10,
+            quantity_step=0.000001,
+            min_order_notional=1.0,
+        )
+
+        self.assertEqual(len(sent_messages), 1)
+        self.assertIn("限价买入] SOXX: 0.321699股", sent_messages[0])
+        self.assertNotIn("不足买入 1 股", sent_messages[0])
+
+    def test_fractional_buy_uses_budget_when_broker_estimate_is_whole_share_zero(self):
+        plan = _build_plan(
+            strategy_symbols=("SOXX",),
+            risk_symbols=("SOXX",),
+            targets={"SOXX": 163.14},
+            market_values={"SOXX": 0.0},
+            sellable_quantities={"SOXX": 0},
+            quantities={"SOXX": 0},
+            current_min_trade=100.0,
+            trade_threshold_value=100.0,
+            investable_cash=891.03,
+            market_status="🧯 过热降档（SOXX）",
+            deploy_ratio_text="15.0%",
+            income_ratio_text="0.0%",
+            income_locked_ratio_text="0.0%",
+            signal_message="SOXX 目标仓位 15.0%",
+            available_cash=923.66,
+            total_strategy_equity=1087.60,
+            portfolio_rows=(("SOXX",),),
+        )
+
+        sent_messages, _, _ = self._run_strategy(
+            plan,
+            prices={"SOXX.US": 504.60},
+            estimate_max_purchase_quantity_value=0,
+            quantity_step=0.000001,
+            min_order_notional=1.0,
+        )
+
+        self.assertEqual(len(sent_messages), 1)
+        self.assertIn("限价买入] SOXX: 0.321699股", sent_messages[0])
+        self.assertNotIn("券商估算可买数量为 0", sent_messages[0])
 
     def test_zero_investable_cash_reports_buying_power_without_trade_note(self):
         plan = _build_plan(
