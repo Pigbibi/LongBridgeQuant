@@ -573,12 +573,12 @@ class RebalanceServiceNotificationTests(unittest.TestCase):
             plan,
             prices={"SOXX.US": 504.60, "SOXL.US": 162.93, "BOXX.US": 116.59},
             estimate_max_purchase_quantity_value=10,
-            quantity_step=0.000001,
+            quantity_step=0.0001,
             min_order_notional=1.0,
         )
 
         self.assertEqual(len(sent_messages), 1)
-        self.assertIn("限价买入] SOXX: 0.321699股", sent_messages[0])
+        self.assertIn("限价买入] SOXX: 0.3216股", sent_messages[0])
         self.assertNotIn("不足买入 1 股", sent_messages[0])
 
     def test_zero_target_sell_uses_sellable_quantity_not_price_derived_floor(self):
@@ -636,12 +636,12 @@ class RebalanceServiceNotificationTests(unittest.TestCase):
             plan,
             prices={"SOXX.US": 504.60},
             estimate_max_purchase_quantity_value=0,
-            quantity_step=0.000001,
+            quantity_step=0.0001,
             min_order_notional=1.0,
         )
 
         self.assertEqual(len(sent_messages), 1)
-        self.assertIn("限价买入] SOXX: 0.321699股", sent_messages[0])
+        self.assertIn("限价买入] SOXX: 0.3216股", sent_messages[0])
         self.assertNotIn("券商估算可买数量为 0", sent_messages[0])
 
     def test_zero_investable_cash_reports_buying_power_without_trade_note(self):

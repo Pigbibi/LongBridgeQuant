@@ -52,7 +52,7 @@ class RuntimeConfigSupportTests(unittest.TestCase):
         self.assertIsNone(settings.tg_token)
         self.assertIsNone(settings.tg_chat_id)
         self.assertFalse(settings.dry_run_only)
-        self.assertEqual(settings.quantity_step, 0.000001)
+        self.assertEqual(settings.quantity_step, 0.0001)
         self.assertEqual(settings.min_order_notional, 1.0)
         self.assertFalse(settings.debug_position_snapshot)
         self.assertIsNone(settings.income_threshold_usd)
