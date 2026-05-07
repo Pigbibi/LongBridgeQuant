@@ -110,6 +110,7 @@ def load_platform_runtime_settings(
             step_env="LONGBRIDGE_ORDER_QUANTITY_STEP",
             fractional_env="LONGBRIDGE_FRACTIONAL_SHARES_ENABLED",
             fractional_default=True,
+            fractional_step=0.0001,
         ),
         min_order_notional=resolve_float_env(
             os.environ,
