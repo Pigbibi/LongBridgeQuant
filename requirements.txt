@@ -1,6 +1,6 @@
 flask
 gunicorn
-./vendor_wheels/quant_platform_kit-0.7.20-py3-none-any.whl
+./vendor_wheels/quant_platform_kit-0.7.21-py3-none-any.whl
 ./vendor_wheels/us_equity_strategies-0.7.35-py3-none-any.whl
 pandas
 requests
