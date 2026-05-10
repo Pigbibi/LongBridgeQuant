@@ -10,28 +10,29 @@ env:
   GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: longbridge-platform-deploy@longbridgequant.iam.gserviceaccount.com
 
 jobs:
-  sync-hk:
-    name: Sync HK Cloud Run Env
+  sync-paper:
+    name: Sync PAPER Cloud Run Env
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
-    environment: longbridge-hk
+    environment: longbridge-paper
     env:
       ENABLE_GITHUB_ENV_SYNC: ${{ vars.ENABLE_GITHUB_ENV_SYNC }}
-      # Set CLOUD_RUN_REGION per Environment so HK/SG can target different regions.
+      # Set CLOUD_RUN_REGION per Environment so paper/SG can target different regions.
       CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
       ACCOUNT_PREFIX: ${{ vars.ACCOUNT_PREFIX }}
       TELEGRAM_TOKEN_SECRET_NAME: ${{ vars.TELEGRAM_TOKEN_SECRET_NAME }}
       LONGPORT_APP_KEY_SECRET_NAME: ${{ vars.LONGPORT_APP_KEY_SECRET_NAME }}
       LONGPORT_APP_SECRET_SECRET_NAME: ${{ vars.LONGPORT_APP_SECRET_SECRET_NAME }}
-      STRATEGY_PROFILE: ${{ vars.STRATEGY_PROFILE || 'soxl_soxx_trend_income' }}
-      ACCOUNT_REGION: ${{ vars.ACCOUNT_REGION || 'HK' }}
+      RUNTIME_TARGET_JSON: ${{ vars.RUNTIME_TARGET_JSON }}
+      ACCOUNT_REGION: ${{ vars.ACCOUNT_REGION || 'PAPER' }}
       LONGPORT_SECRET_NAME: ${{ vars.LONGPORT_SECRET_NAME }}
       LONGBRIDGE_FEATURE_SNAPSHOT_PATH: ${{ vars.LONGBRIDGE_FEATURE_SNAPSHOT_PATH }}
       LONGBRIDGE_FEATURE_SNAPSHOT_MANIFEST_PATH: ${{ vars.LONGBRIDGE_FEATURE_SNAPSHOT_MANIFEST_PATH }}
       LONGBRIDGE_STRATEGY_CONFIG_PATH: ${{ vars.LONGBRIDGE_STRATEGY_CONFIG_PATH }}
+      # Optional strategy overrides; leave unset to inherit the UsEquityStrategies profile defaults.
       INCOME_THRESHOLD_USD: ${{ vars.INCOME_THRESHOLD_USD }}
       QQQI_INCOME_RATIO: ${{ vars.QQQI_INCOME_RATIO }}
       NOTIFY_LANG: ${{ vars.NOTIFY_LANG }}
@@ -48,7 +49,7 @@ jobs:
 
           if [ "${ENABLE_GITHUB_ENV_SYNC:-}" != "true" ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping HK Cloud Run env sync because ENABLE_GITHUB_ENV_SYNC is not set to true." >&2
+            echo "Skipping PAPER Cloud Run env sync because ENABLE_GITHUB_ENV_SYNC is not set to true." >&2
             exit 0
           fi
 
@@ -83,9 +84,13 @@ jobs:
           import sys
           from us_equity_strategies import resolve_canonical_profile
 
-          profile = os.environ.get("STRATEGY_PROFILE", "").strip().lower()
+          raw_runtime_target = os.environ.get("RUNTIME_TARGET_JSON", "").strip()
+          if not raw_runtime_target:
+              raise SystemExit("RUNTIME_TARGET_JSON is required")
+          runtime_target = json.loads(raw_runtime_target)
+          profile = str(runtime_target.get("strategy_profile") or "").strip().lower()
           if not profile:
-              raise SystemExit("STRATEGY_PROFILE is required")
+              raise SystemExit("RUNTIME_TARGET_JSON.strategy_profile is required")
           canonical_profile = resolve_canonical_profile(profile)
 
           raw_status = subprocess.check_output(
@@ -114,22 +119,10 @@ jobs:
               output.write(
                   f"config_source_policy={str(selected.get('config_source_policy') or 'none')}\n"
               )
-              normalized_region = os.environ.get("ACCOUNT_REGION", "").strip().upper()
-              dry_run_only = os.environ.get("LONGBRIDGE_DRY_RUN_ONLY", "").strip().lower() == "true"
-              runtime_target = {
-                  "platform_id": "longbridge",
-                  "strategy_profile": canonical_profile,
-                  "dry_run_only": dry_run_only,
-                  "deployment_selector": normalized_region or None,
-                  "account_selector": [normalized_region] if normalized_region else [],
-                  "account_scope": normalized_region or None,
-                  "service_name": os.environ.get("CLOUD_RUN_SERVICE", "").strip() or None,
-                  "execution_mode": "paper" if dry_run_only else "live",
-              }
               output.write(f"runtime_target_json={json.dumps(runtime_target, sort_keys=True)}\n")
           PY
 
-      - name: Validate HK env sync inputs
+      - name: Validate PAPER env sync inputs
         if: steps.config.outputs.enabled == 'true'
         env:
           REQUIRES_SNAPSHOT_ARTIFACTS: ${{ steps.strategy_requirements.outputs.requires_snapshot_artifacts }}
@@ -160,10 +153,6 @@ jobs:
             missing_vars+=("TELEGRAM_TOKEN_SECRET_NAME or TELEGRAM_TOKEN")
           fi
 
-          if [ -z "${RUNTIME_TARGET_JSON:-}" ]; then
-            missing_vars+=("RUNTIME_TARGET_JSON")
-          fi
-
           if [ -z "${LONGPORT_APP_KEY_SECRET_NAME:-}" ]; then
             missing_vars+=("LONGPORT_APP_KEY_SECRET_NAME")
           fi
@@ -187,9 +176,9 @@ jobs:
           fi
 
           if [ "${#missing_vars[@]}" -gt 0 ]; then
-            echo "HK Cloud Run env sync is enabled, but these values are missing:" >&2
-            echo "  - If HK and SG run in different regions, set CLOUD_RUN_REGION on the longbridge-hk Environment." >&2
-            echo "  - Set LONGPORT_APP_KEY_SECRET_NAME and LONGPORT_APP_SECRET_SECRET_NAME on the longbridge-hk Environment so HK does not fall back to shared repository defaults." >&2
+            echo "PAPER Cloud Run env sync is enabled, but these values are missing:" >&2
+            echo "  - If paper and SG run in different regions, set CLOUD_RUN_REGION on the longbridge-paper Environment." >&2
+            echo "  - Set LONGPORT_APP_KEY_SECRET_NAME and LONGPORT_APP_SECRET_SECRET_NAME on the longbridge-paper Environment so paper does not fall back to shared repository defaults." >&2
             printf '  - %s\n' "${missing_vars[@]}" >&2
             exit 1
           fi
@@ -260,7 +249,6 @@ jobs:
             "NOTIFY_LANG=${NOTIFY_LANG}"
             "LONGPORT_SECRET_NAME=${LONGPORT_SECRET_NAME}"
             "ACCOUNT_PREFIX=${ACCOUNT_PREFIX}"
-            "STRATEGY_PROFILE=${STRATEGY_PROFILE}"
             "ACCOUNT_REGION=${ACCOUNT_REGION}"
             "RUNTIME_TARGET_JSON=${RUNTIME_TARGET_JSON}"
           )
@@ -361,14 +349,14 @@ jobs:
     environment: longbridge-sg
     env:
       ENABLE_GITHUB_ENV_SYNC: ${{ vars.ENABLE_GITHUB_ENV_SYNC }}
-      # Set CLOUD_RUN_REGION per Environment so HK/SG can target different regions.
+      # Set CLOUD_RUN_REGION per Environment so paper/SG can target different regions.
       CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
       ACCOUNT_PREFIX: ${{ vars.ACCOUNT_PREFIX }}
       TELEGRAM_TOKEN_SECRET_NAME: ${{ vars.TELEGRAM_TOKEN_SECRET_NAME }}
       LONGPORT_APP_KEY_SECRET_NAME: ${{ vars.LONGPORT_APP_KEY_SECRET_NAME }}
       LONGPORT_APP_SECRET_SECRET_NAME: ${{ vars.LONGPORT_APP_SECRET_SECRET_NAME }}
-      STRATEGY_PROFILE: ${{ vars.STRATEGY_PROFILE || 'soxl_soxx_trend_income' }}
+      RUNTIME_TARGET_JSON: ${{ vars.RUNTIME_TARGET_JSON }}
       ACCOUNT_REGION: ${{ vars.ACCOUNT_REGION || 'SG' }}
       LONGPORT_SECRET_NAME: ${{ vars.LONGPORT_SECRET_NAME }}
       LONGBRIDGE_FEATURE_SNAPSHOT_PATH: ${{ vars.LONGBRIDGE_FEATURE_SNAPSHOT_PATH }}
@@ -425,9 +413,13 @@ jobs:
           import sys
           from us_equity_strategies import resolve_canonical_profile
 
-          profile = os.environ.get("STRATEGY_PROFILE", "").strip().lower()
+          raw_runtime_target = os.environ.get("RUNTIME_TARGET_JSON", "").strip()
+          if not raw_runtime_target:
+              raise SystemExit("RUNTIME_TARGET_JSON is required")
+          runtime_target = json.loads(raw_runtime_target)
+          profile = str(runtime_target.get("strategy_profile") or "").strip().lower()
           if not profile:
-              raise SystemExit("STRATEGY_PROFILE is required")
+              raise SystemExit("RUNTIME_TARGET_JSON.strategy_profile is required")
           canonical_profile = resolve_canonical_profile(profile)
 
           raw_status = subprocess.check_output(
@@ -457,17 +449,6 @@ jobs:
                   f"config_source_policy={str(selected.get('config_source_policy') or 'none')}\n"
               )
               normalized_region = os.environ.get("ACCOUNT_REGION", "").strip().upper()
-              dry_run_only = os.environ.get("LONGBRIDGE_DRY_RUN_ONLY", "").strip().lower() == "true"
-              runtime_target = {
-                  "platform_id": "longbridge",
-                  "strategy_profile": canonical_profile,
-                  "dry_run_only": dry_run_only,
-                  "deployment_selector": normalized_region or None,
-                  "account_selector": [normalized_region] if normalized_region else [],
-                  "account_scope": normalized_region or None,
-                  "service_name": os.environ.get("CLOUD_RUN_SERVICE", "").strip() or None,
-                  "execution_mode": "paper" if dry_run_only else "live",
-              }
               output.write(f"runtime_target_json={json.dumps(runtime_target, sort_keys=True)}\n")
           PY
 
@@ -530,7 +511,7 @@ jobs:
 
           if [ "${#missing_vars[@]}" -gt 0 ]; then
             echo "SG Cloud Run env sync is enabled, but these values are missing:" >&2
-            echo "  - If HK and SG run in different regions, set CLOUD_RUN_REGION on the longbridge-sg Environment." >&2
+            echo "  - If paper and SG run in different regions, set CLOUD_RUN_REGION on the longbridge-sg Environment." >&2
             echo "  - Set LONGPORT_APP_KEY_SECRET_NAME and LONGPORT_APP_SECRET_SECRET_NAME on the longbridge-sg Environment so SG does not fall back to shared repository defaults." >&2
             printf '  - %s\n' "${missing_vars[@]}" >&2
             exit 1
@@ -602,7 +583,6 @@ jobs:
             "NOTIFY_LANG=${NOTIFY_LANG}"
             "LONGPORT_SECRET_NAME=${LONGPORT_SECRET_NAME}"
             "ACCOUNT_PREFIX=${ACCOUNT_PREFIX}"
-            "STRATEGY_PROFILE=${STRATEGY_PROFILE}"
             "ACCOUNT_REGION=${ACCOUNT_REGION}"
             "RUNTIME_TARGET_JSON=${RUNTIME_TARGET_JSON}"
           )

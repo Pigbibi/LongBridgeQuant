@@ -137,7 +137,10 @@ class SharedChatIdTests(unittest.TestCase):
                 os.environ,
                 {
                     "GLOBAL_TELEGRAM_CHAT_ID": "shared-chat-id",
-                    "STRATEGY_PROFILE": "soxl_soxx_trend_income",
+                    "RUNTIME_TARGET_JSON": (
+                        '{"platform_id":"longbridge","strategy_profile":"soxl_soxx_trend_income",'
+                        '"dry_run_only":false,"execution_mode":"live"}'
+                    ),
                 },
                 clear=False,
             ):
