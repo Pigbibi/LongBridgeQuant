@@ -58,7 +58,9 @@ def build_switch_plan(profile: str, *, account_region: str | None = None) -> dic
         service_name=f"longbridge-quant-{normalized_region.lower()}-service" if normalized_region else None,
     )
 
-    set_env: dict[str, str] = {"STRATEGY_PROFILE": definition.profile}
+    set_env: dict[str, str] = {
+        "RUNTIME_TARGET_JSON": json.dumps(runtime_target.to_dict(), separators=(",", ":"))
+    }
     if normalized_region:
         set_env["ACCOUNT_REGION"] = normalized_region
         set_env["ACCOUNT_PREFIX"] = normalized_region
@@ -71,11 +73,11 @@ def build_switch_plan(profile: str, *, account_region: str | None = None) -> dic
     optional_env = ["LONGBRIDGE_DRY_RUN_ONLY"]
     remove_if_present: list[str] = []
     notes = [
-        "Keep ACCOUNT_PREFIX and ACCOUNT_REGION aligned to the current HK or SG service identity.",
+        "Keep ACCOUNT_PREFIX and ACCOUNT_REGION aligned to the current paper or SG service identity.",
     ]
 
     if not normalized_region:
-        notes.append("Pass --account-region HK or --account-region SG if you want ACCOUNT_PREFIX/ACCOUNT_REGION placeholders filled in.")
+        notes.append("Pass --account-region PAPER or --account-region SG if you want ACCOUNT_PREFIX/ACCOUNT_REGION placeholders filled in.")
 
     if requires_feature_snapshot:
         set_env["LONGBRIDGE_FEATURE_SNAPSHOT_PATH"] = "<required>"

@@ -84,6 +84,8 @@ class NotificationTests(unittest.TestCase):
     def test_supported_strategy_profiles_have_translated_names(self):
         zh_name = build_strategy_display_name(build_translator("zh"))
         en_name = build_strategy_display_name(build_translator("en"))
+        self.assertEqual(zh_name("global_etf_confidence_vol_gate"), "全球 ETF 置信波动门控")
+        self.assertEqual(en_name("global_etf_confidence_vol_gate"), "Global ETF Confidence Vol Gate")
 
         for profile in SUPPORTED_STRATEGY_PROFILES:
             self.assertNotEqual(zh_name(profile), profile)
