@@ -58,7 +58,7 @@ def test_build_market_data_port_normalizes_symbols_and_caches_quotes():
     assert quote_a.last_price == 125.67
     assert quote_a == quote_b
     assert observed["quotes"] == ["SOXL.US"]
-    assert observed["history"] == [("SOXL.US", "day", 260, "forward")]
+    assert observed["history"] == [("SOXL.US", "day", 420, "forward")]
     assert series.symbol == "SOXL.US"
     assert [point.close for point in series.points] == [123.45, 125.67]
 

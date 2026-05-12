@@ -10,6 +10,9 @@ from typing import Any
 import pandas as pd
 
 from quant_platform_kit.common.models import PricePoint, PriceSeries, QuoteSnapshot
+from quant_platform_kit.common.runtime_inputs import (
+    DEFAULT_SEMICONDUCTOR_ROTATION_HISTORY_LOOKBACK,
+)
 from quant_platform_kit.common.port_adapters import (
     CallableExecutionPort,
     CallableMarketDataPort,
@@ -34,7 +37,7 @@ class LongBridgeBrokerAdapters:
     fetch_strategy_account_state_fn: Callable[[Any, Any], Mapping[str, Any]]
     submit_order_fn: Callable[..., Any]
     clock: Callable[[], datetime] = _utcnow
-    price_history_lookback: int = 260
+    price_history_lookback: int = DEFAULT_SEMICONDUCTOR_ROTATION_HISTORY_LOOKBACK
 
     def normalize_market_symbol(self, symbol: str) -> str:
         value = str(symbol or "").strip().upper()
@@ -208,7 +211,7 @@ def build_runtime_broker_adapters(
     fetch_strategy_account_state_fn: Callable[[Any, Any], Mapping[str, Any]],
     submit_order_fn: Callable[..., Any],
     clock: Callable[[], datetime] = _utcnow,
-    price_history_lookback: int = 260,
+    price_history_lookback: int = DEFAULT_SEMICONDUCTOR_ROTATION_HISTORY_LOOKBACK,
 ) -> LongBridgeBrokerAdapters:
     return LongBridgeBrokerAdapters(
         strategy_symbols=tuple(strategy_symbols),

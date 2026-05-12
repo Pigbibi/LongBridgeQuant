@@ -15,6 +15,8 @@ from application.runtime_broker_adapters import build_runtime_broker_adapters
 from application.runtime_composer import build_runtime_composer
 from application.rebalance_service import run_strategy as run_rebalance_cycle
 from application.runtime_strategy_adapters import build_runtime_strategy_adapters
+from application.longbridge_execution import submit_order
+from application.longbridge_portfolio import fetch_strategy_account_state
 from entrypoints.cloud_run import is_market_open_now
 from runtime_config_support import load_platform_runtime_settings
 from notifications.telegram import build_signal_text, build_strategy_display_name, build_translator
@@ -37,10 +39,8 @@ from quant_platform_kit.longbridge import (
     estimate_max_purchase_quantity,
     fetch_last_price,
     fetch_order_status,
-    fetch_strategy_account_state,
     fetch_token_from_secret,
     refresh_token_if_needed,
-    submit_order,
 )
 from strategy_runtime import load_strategy_runtime
 from decision_mapper import map_strategy_decision_to_plan
@@ -110,6 +110,10 @@ def log_position_snapshot(message):
     print(f"[{ACCOUNT_REGION}] {message}", flush=True)
 
 
+def log_runtime_warning(message):
+    print(f"[{ACCOUNT_REGION}] [warning] {message}", flush=True)
+
+
 BROKER_ADAPTERS = build_runtime_broker_adapters(
     strategy_symbols=tuple(MANAGED_SYMBOLS),
     account_hash=ACCOUNT_PREFIX or ACCOUNT_REGION or "longbridge",
@@ -123,6 +127,7 @@ BROKER_ADAPTERS = build_runtime_broker_adapters(
             if getattr(RUNTIME_SETTINGS, "debug_position_snapshot", False)
             else None
         ),
+        warning_log_fn=log_runtime_warning,
     ),
     submit_order_fn=submit_order,
 )
