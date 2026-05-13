@@ -219,9 +219,10 @@ class RequestHandlingTests(unittest.TestCase):
         module = load_module()
         observed = {"force_run": None, "validation_only": None}
 
-        def fake_run_strategy(*, force_run=False, validation_only=False):
+        def fake_run_strategy(*, force_run=False, validation_only=False, validation_label="backfill"):
             observed["force_run"] = force_run
             observed["validation_only"] = validation_only
+            observed["validation_label"] = validation_label
 
         module.run_strategy = fake_run_strategy
 
@@ -232,6 +233,26 @@ class RequestHandlingTests(unittest.TestCase):
         self.assertEqual(body, "OK")
         self.assertTrue(observed["force_run"])
         self.assertTrue(observed["validation_only"])
+
+    def test_handle_precheck_forces_strategy_run(self):
+        module = load_module()
+        observed = {"force_run": None, "validation_only": None}
+
+        def fake_run_strategy(*, force_run=False, validation_only=False, validation_label="backfill"):
+            observed["force_run"] = force_run
+            observed["validation_only"] = validation_only
+            observed["validation_label"] = validation_label
+
+        module.run_strategy = fake_run_strategy
+
+        with module.app.test_request_context("/precheck", method="POST"):
+            body, status = module.handle_precheck()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body, "Precheck OK")
+        self.assertTrue(observed["force_run"])
+        self.assertTrue(observed["validation_only"])
+        self.assertEqual(observed["validation_label"], "precheck")
 
     def test_run_strategy_emits_structured_runtime_events(self):
         module = load_module()
