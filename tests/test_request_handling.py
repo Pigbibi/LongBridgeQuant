@@ -218,7 +218,6 @@ class RequestHandlingTests(unittest.TestCase):
     def test_handle_backfill_forces_strategy_run(self):
         module = load_module()
         observed = {"force_run": None, "validation_only": None}
-
         def fake_run_strategy(*, force_run=False, validation_only=False, validation_label="backfill"):
             observed["force_run"] = force_run
             observed["validation_only"] = validation_only
@@ -233,7 +232,6 @@ class RequestHandlingTests(unittest.TestCase):
         self.assertEqual(body, "OK")
         self.assertTrue(observed["force_run"])
         self.assertTrue(observed["validation_only"])
-
     def test_handle_precheck_forces_strategy_run(self):
         module = load_module()
         observed = {"force_run": None, "validation_only": None}
