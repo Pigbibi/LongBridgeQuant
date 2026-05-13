@@ -228,6 +228,7 @@ def execute_rebalance_cycle(
     cash_by_currency = _normalize_cash_by_currency(portfolio.get("cash_by_currency"))
     investable_cash = float(execution["investable_cash"])
     current_min_trade = float(execution["current_min_trade"])
+    dry_run_sale_proceeds = 0.0
 
     def append_order_id_suffix(log_message, order_id):
         order_id_text = str(order_id or "").strip()
@@ -398,6 +399,8 @@ def execute_rebalance_cycle(
                             round(price, 2),
                             order_type="market",
                         )
+                        if submitted:
+                            dry_run_sale_proceeds += float(quantity) * round(price, 2)
                     else:
                         submitted = submit_order_via_port(
                             f"{symbol}.US",
@@ -418,10 +421,10 @@ def execute_rebalance_cycle(
                     kind="sell_skipped",
                     detail=(
                         f"Symbol: {symbol}.US Diff: ${abs(diff):.2f} "
-                            f"Held: {quantities[symbol]} Sellable: {sellable_quantities[symbol]} "
-                            f"(no sellable)"
-                        ),
-                    )
+                        f"Held: {quantities[symbol]} Sellable: {sellable_quantities[symbol]} "
+                        f"(no sellable)"
+                    ),
+                )
 
     buy_candidates = [
         symbol
@@ -464,6 +467,8 @@ def execute_rebalance_cycle(
                     sweep_price,
                     order_type="market",
                 )
+                if submitted:
+                    dry_run_sale_proceeds += float(sweep_quantity) * sweep_price
             else:
                 submitted = submit_order_via_port(
                     f"{cash_sweep_symbol}.US",
@@ -482,37 +487,48 @@ def execute_rebalance_cycle(
                 sell_submitted = True
 
     if sell_submitted:
-        previous_investable_cash = investable_cash
-        refresh_attempts = max(1, int(post_sell_refresh_attempts or 1))
-        refresh_interval = max(0.0, float(post_sell_refresh_interval_sec or 0.0))
-        best_refreshed_state = None
-        best_investable_cash = previous_investable_cash
-        for attempt in range(refresh_attempts):
-            if attempt > 0:
-                sleeper(refresh_interval)
-            refreshed_state = fetch_replanned_state()
-            refreshed_execution = refreshed_state[2]
-            refreshed_investable_cash = float(refreshed_execution["investable_cash"])
-            if best_refreshed_state is None or refreshed_investable_cash > best_investable_cash:
-                best_refreshed_state = refreshed_state
-                best_investable_cash = refreshed_investable_cash
-            if refreshed_investable_cash > previous_investable_cash:
-                best_refreshed_state = refreshed_state
-                break
-        plan, portfolio, execution, allocation = best_refreshed_state
-        threshold_value = float(execution["trade_threshold_value"])
-        limit_order_symbols = set(
-            allocation.get("risk_symbols", ()) + allocation.get("income_symbols", ())
-        )
-        strategy_assets = tuple(allocation["strategy_symbols"])
-        market_values = dict(portfolio["market_values"])
-        quantities = dict(portfolio["quantities"])
-        sellable_quantities = dict(portfolio["sellable_quantities"])
-        target_values = dict(allocation["targets"])
-        available_cash = float(portfolio["liquid_cash"])
-        cash_by_currency = _normalize_cash_by_currency(portfolio.get("cash_by_currency"))
-        investable_cash = float(execution["investable_cash"])
-        current_min_trade = float(execution["current_min_trade"])
+        if dry_run_only and dry_run_sale_proceeds > 0.0:
+            simulated_cash = float(dry_run_sale_proceeds)
+            available_cash = max(0.0, available_cash + simulated_cash)
+            investable_cash = max(0.0, investable_cash + simulated_cash)
+            validation_message = (
+                f"🧪 验证回款已入账: cash=${simulated_cash:.2f} "
+                f"investable=${investable_cash:.2f}"
+            )
+            note_logs.append(validation_message)
+            print(with_prefix(validation_message), flush=True)
+        else:
+            previous_investable_cash = investable_cash
+            refresh_attempts = max(1, int(post_sell_refresh_attempts or 1))
+            refresh_interval = max(0.0, float(post_sell_refresh_interval_sec or 0.0))
+            best_refreshed_state = None
+            best_investable_cash = previous_investable_cash
+            for attempt in range(refresh_attempts):
+                if attempt > 0:
+                    sleeper(refresh_interval)
+                refreshed_state = fetch_replanned_state()
+                refreshed_execution = refreshed_state[2]
+                refreshed_investable_cash = float(refreshed_execution["investable_cash"])
+                if best_refreshed_state is None or refreshed_investable_cash > best_investable_cash:
+                    best_refreshed_state = refreshed_state
+                    best_investable_cash = refreshed_investable_cash
+                if refreshed_investable_cash > previous_investable_cash:
+                    best_refreshed_state = refreshed_state
+                    break
+            plan, portfolio, execution, allocation = best_refreshed_state
+            threshold_value = float(execution["trade_threshold_value"])
+            limit_order_symbols = set(
+                allocation.get("risk_symbols", ()) + allocation.get("income_symbols", ())
+            )
+            strategy_assets = tuple(allocation["strategy_symbols"])
+            market_values = dict(portfolio["market_values"])
+            quantities = dict(portfolio["quantities"])
+            sellable_quantities = dict(portfolio["sellable_quantities"])
+            target_values = dict(allocation["targets"])
+            available_cash = float(portfolio["liquid_cash"])
+            cash_by_currency = _normalize_cash_by_currency(portfolio.get("cash_by_currency"))
+            investable_cash = float(execution["investable_cash"])
+            current_min_trade = float(execution["current_min_trade"])
 
     if (
         available_cash <= 0.0
