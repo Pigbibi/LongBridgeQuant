@@ -192,7 +192,7 @@ def build_composer():
     )
 
 
-def run_strategy():
+def run_strategy(*, force_run: bool = False):
     composer = build_composer()
     reporting_adapters = composer.build_reporting_adapters()
     log_context, report = reporting_adapters.start_run()
@@ -224,7 +224,7 @@ def run_strategy():
                 error_message=str(error),
             )
             print(composer.with_prefix(f"Market hours check failed: {error}"), flush=True)
-        if not market_open:
+        if not market_open and not force_run:
             reporting_adapters.log_event(
                 log_context,
                 "outside_market_hours",
@@ -239,6 +239,13 @@ def run_strategy():
             )
             print(composer.with_prefix("Outside market hours; skip."), flush=True)
             return
+        if force_run and not market_open:
+            reporting_adapters.log_event(
+                log_context,
+                "market_hours_bypassed",
+                message="Market hours bypassed for backfill execution",
+            )
+            print(composer.with_prefix("Market hours bypassed for backfill execution."), flush=True)
         run_rebalance_cycle(
             runtime=composer.build_rebalance_runtime(),
             config=composer.build_rebalance_config(strategy_plugin_signals=strategy_plugin_signals),
@@ -282,6 +289,13 @@ def run_strategy():
 def handle_trigger():
     """Entrypoint for Cloud Run / scheduler: run strategy and return 200."""
     run_strategy()
+    return "OK", 200
+
+
+@app.route("/backfill", methods=["POST", "GET"])
+def handle_backfill():
+    """Manual backfill entrypoint that bypasses market-hours guards."""
+    run_strategy(force_run=True)
     return "OK", 200
 
 

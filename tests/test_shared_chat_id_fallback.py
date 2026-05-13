@@ -15,6 +15,8 @@ PLATFORM_KIT_SRC = ROOT.parent / "QuantPlatformKit" / "src"
 if str(PLATFORM_KIT_SRC) not in sys.path:
     sys.path.insert(0, str(PLATFORM_KIT_SRC))
 
+from quant_platform_kit.common.runtime_target import build_runtime_target
+
 
 @contextmanager
 def install_stub_modules():
@@ -52,6 +54,31 @@ def install_stub_modules():
     cloud_run_module = types.ModuleType("entrypoints.cloud_run")
     cloud_run_module.is_market_open_now = lambda: True
 
+    runtime_config_support_module = types.ModuleType("runtime_config_support")
+    runtime_config_support_module.load_platform_runtime_settings = lambda **_kwargs: types.SimpleNamespace(
+        project_id=None,
+        secret_name="longport_token_hk",
+        account_prefix="HK",
+        strategy_profile="soxl_soxx_trend_income",
+        strategy_display_name="SOXL/SOXX Semiconductor Trend Income",
+        strategy_domain="us_equity",
+        account_region="HK",
+        notify_lang="en",
+        tg_token=None,
+        tg_chat_id="shared-chat-id",
+        dry_run_only=False,
+        fractional_limit_buy_fallback_to_market=False,
+        runtime_target=build_runtime_target(
+            platform_id="longbridge",
+            strategy_profile="soxl_soxx_trend_income",
+            dry_run_only=False,
+            deployment_selector="HK",
+            account_selector=("HK",),
+            account_scope="HK",
+            service_name="longbridge-quant-hk-service",
+        ),
+    )
+
     qpk_longbridge_module = types.ModuleType("quant_platform_kit.longbridge")
     qpk_longbridge_module.build_contexts = lambda *args, **kwargs: ("quote-context", "trade-context")
     qpk_longbridge_module.calculate_rotation_indicators = lambda *args, **kwargs: {}
@@ -75,6 +102,9 @@ def install_stub_modules():
 
     google_module.auth = google_auth_module
     google_cloud_module.secretmanager_v1 = google_secretmanager_module
+
+    pandas_module = types.ModuleType("pandas")
+    pandas_module.Timestamp = lambda value=None: value
 
     pandas_market_calendars = types.ModuleType("pandas_market_calendars")
 
@@ -104,19 +134,28 @@ def install_stub_modules():
     ):
         setattr(openapi_module, name, type(name, (), {}))
 
+    us_equity_strategies_module = types.ModuleType("us_equity_strategies")
+    us_equity_strategies_module.__path__ = []
+    catalog_module = types.ModuleType("us_equity_strategies.catalog")
+    catalog_module.resolve_canonical_profile = lambda profile: profile
+
     modules = {
         "flask": flask_module,
         "requests": requests_module,
         "entrypoints.cloud_run": cloud_run_module,
+        "runtime_config_support": runtime_config_support_module,
         "quant_platform_kit.longbridge": qpk_longbridge_module,
         "google": google_module,
         "google.auth": google_auth_module,
         "google.cloud": google_cloud_module,
         "google.cloud.secretmanager_v1": google_secretmanager_module,
+        "pandas": pandas_module,
         "pandas_market_calendars": pandas_market_calendars,
         "strategy_runtime": strategy_runtime_module,
         "longport": longport_module,
         "longport.openapi": openapi_module,
+        "us_equity_strategies": us_equity_strategies_module,
+        "us_equity_strategies.catalog": catalog_module,
     }
     original = {name: sys.modules.get(name) for name in modules}
     sys.modules.update(modules)
