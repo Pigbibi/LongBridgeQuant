@@ -21,6 +21,13 @@ from quant_platform_kit.strategy_contracts import (
     build_portfolio_snapshot_from_account_state,
 )
 
+try:
+    from quant_platform_kit.common.runtime_inputs import (
+        DEFAULT_SEMICONDUCTOR_ROTATION_HISTORY_LOOKBACK,
+    )
+except ImportError:  # pragma: no cover - compatibility with older packaged wheels
+    DEFAULT_SEMICONDUCTOR_ROTATION_HISTORY_LOOKBACK = 420
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -34,7 +41,7 @@ class LongBridgeBrokerAdapters:
     fetch_strategy_account_state_fn: Callable[[Any, Any], Mapping[str, Any]]
     submit_order_fn: Callable[..., Any]
     clock: Callable[[], datetime] = _utcnow
-    price_history_lookback: int = 260
+    price_history_lookback: int = DEFAULT_SEMICONDUCTOR_ROTATION_HISTORY_LOOKBACK
 
     def normalize_market_symbol(self, symbol: str) -> str:
         value = str(symbol or "").strip().upper()
@@ -208,7 +215,7 @@ def build_runtime_broker_adapters(
     fetch_strategy_account_state_fn: Callable[[Any, Any], Mapping[str, Any]],
     submit_order_fn: Callable[..., Any],
     clock: Callable[[], datetime] = _utcnow,
-    price_history_lookback: int = 260,
+    price_history_lookback: int = DEFAULT_SEMICONDUCTOR_ROTATION_HISTORY_LOOKBACK,
 ) -> LongBridgeBrokerAdapters:
     return LongBridgeBrokerAdapters(
         strategy_symbols=tuple(strategy_symbols),

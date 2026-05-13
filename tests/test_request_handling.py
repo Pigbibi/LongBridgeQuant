@@ -7,15 +7,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-from quant_platform_kit.common.runtime_target import build_runtime_target
-
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 PLATFORM_KIT_SRC = ROOT.parent / "QuantPlatformKit" / "src"
 if str(PLATFORM_KIT_SRC) not in sys.path:
     sys.path.insert(0, str(PLATFORM_KIT_SRC))
+
+from quant_platform_kit.common.runtime_target import build_runtime_target
 
 
 @contextmanager
@@ -103,6 +102,9 @@ def install_stub_modules():
     google_module.auth = google_auth_module
     google_cloud_module.secretmanager_v1 = google_secretmanager_module
 
+    pandas_module = types.ModuleType("pandas")
+    pandas_module.Timestamp = lambda value=None: value
+
     pandas_market_calendars = types.ModuleType("pandas_market_calendars")
 
     strategy_runtime_module = types.ModuleType("strategy_runtime")
@@ -132,6 +134,11 @@ def install_stub_modules():
     ):
         setattr(openapi_module, name, type(name, (), {}))
 
+    us_equity_strategies_module = types.ModuleType("us_equity_strategies")
+    us_equity_strategies_module.__path__ = []
+    catalog_module = types.ModuleType("us_equity_strategies.catalog")
+    catalog_module.resolve_canonical_profile = lambda profile: profile
+
     modules = {
         "flask": flask_module,
         "requests": requests_module,
@@ -142,10 +149,13 @@ def install_stub_modules():
         "google.auth": google_auth_module,
         "google.cloud": google_cloud_module,
         "google.cloud.secretmanager_v1": google_secretmanager_module,
+        "pandas": pandas_module,
         "pandas_market_calendars": pandas_market_calendars,
         "strategy_runtime": strategy_runtime_module,
         "longport": longport_module,
         "longport.openapi": openapi_module,
+        "us_equity_strategies": us_equity_strategies_module,
+        "us_equity_strategies.catalog": catalog_module,
     }
     original = {name: sys.modules.get(name) for name in modules}
     sys.modules.update(modules)
@@ -205,6 +215,24 @@ class RequestHandlingTests(unittest.TestCase):
         self.assertEqual(body, "OK")
         self.assertTrue(observed["called"])
 
+    def test_handle_backfill_forces_strategy_run(self):
+        module = load_module()
+        observed = {"force_run": None, "validation_only": None}
+
+        def fake_run_strategy(*, force_run=False, validation_only=False):
+            observed["force_run"] = force_run
+            observed["validation_only"] = validation_only
+
+        module.run_strategy = fake_run_strategy
+
+        with module.app.test_request_context("/backfill", method="POST"):
+            body, status = module.handle_backfill()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body, "OK")
+        self.assertTrue(observed["force_run"])
+        self.assertTrue(observed["validation_only"])
+
     def test_run_strategy_emits_structured_runtime_events(self):
         module = load_module()
         observed = []
@@ -221,6 +249,62 @@ class RequestHandlingTests(unittest.TestCase):
             ["strategy_cycle_started", "strategy_cycle_completed"],
         )
         self.assertTrue(all(run_id == "run-001" for run_id, _event, _fields in observed))
+
+    def test_run_strategy_force_runs_when_market_closed(self):
+        module = load_module()
+        observed = []
+
+        module.build_run_id = lambda: "run-001"
+        module.emit_runtime_log = lambda context, event, **fields: observed.append((context.run_id, event, fields))
+        module.is_market_open_now = lambda: False
+        module.run_rebalance_cycle = lambda **_kwargs: observed.append(("rebalance", "called", {}))
+
+        module.run_strategy(force_run=True)
+
+        events = [event for _run_id, event, _fields in observed]
+        self.assertIn("market_hours_bypassed", events)
+        self.assertIn("strategy_cycle_completed", events)
+        self.assertIn(("rebalance", "called", {}), observed)
+
+    def test_run_strategy_validation_only_uses_dry_run_composer(self):
+        module = load_module()
+        observed = {"override": None}
+
+        class FakeComposer:
+            def build_reporting_adapters(self):
+                return types.SimpleNamespace(
+                    start_run=lambda: (types.SimpleNamespace(run_id="run-001"), {"status": "pending"}),
+                    log_event=lambda *args, **kwargs: None,
+                    persist_execution_report=lambda report: types.SimpleNamespace(local_path="/tmp/report.json"),
+                )
+
+            def build_notification_adapters(self):
+                return types.SimpleNamespace(publish_cycle_notification=lambda **_kwargs: None)
+
+            def load_strategy_plugin_signals(self, *_args, **_kwargs):
+                return (), None
+
+            def attach_strategy_plugin_report(self, *_args, **_kwargs):
+                return None
+
+            def with_prefix(self, message):
+                return message
+
+            def build_rebalance_runtime(self):
+                return types.SimpleNamespace()
+
+            def build_rebalance_config(self, *, strategy_plugin_signals=()):
+                return types.SimpleNamespace()
+
+        module.build_composer = lambda *, dry_run_only_override=None: observed.__setitem__("override", dry_run_only_override) or FakeComposer()
+        module.is_market_open_now = lambda: False
+        module.run_rebalance_cycle = lambda **_kwargs: None
+        module.persist_execution_report = lambda report: types.SimpleNamespace(local_path="/tmp/report.json")
+        module.build_run_id = lambda: "run-001"
+
+        module.run_strategy(force_run=True, validation_only=True)
+
+        self.assertTrue(observed["override"])
 
     def test_run_strategy_persists_machine_readable_report(self):
         module = load_module()

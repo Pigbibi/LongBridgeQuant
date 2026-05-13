@@ -108,6 +108,7 @@ def _build_plan(
             "sellable_quantities": dict(sellable_quantities),
             "total_equity": float(total_strategy_equity),
             "liquid_cash": float(available_cash),
+            "cash_sweep_symbol": (safe_haven_symbols[0] if safe_haven_symbols else None),
             "cash_by_currency": dict(cash_by_currency or {}),
         },
         "execution": {
@@ -951,6 +952,159 @@ class RebalanceServiceNotificationTests(unittest.TestCase):
         self.assertIn("限价买入", sent_messages[0])
         self.assertNotIn("买入跳过", sent_messages[0])
         self.assertEqual(len(observed_plan_inputs), 2)
+
+    def test_cash_sweep_symbol_can_fund_buy_when_investable_cash_is_zero(self):
+        initial_plan = _build_plan(
+            strategy_symbols=("SOXL", "SOXX", "BOXX"),
+            risk_symbols=("SOXL", "SOXX"),
+            safe_haven_symbols=("BOXX",),
+            targets={"SOXL": 500.0, "SOXX": 0.0, "BOXX": 1000.0},
+            market_values={"SOXL": 0.0, "SOXX": 0.0, "BOXX": 1000.0},
+            sellable_quantities={"SOXL": 0, "SOXX": 0, "BOXX": 10},
+            quantities={"SOXL": 0, "SOXX": 0, "BOXX": 10},
+            current_min_trade=100.0,
+            trade_threshold_value=100.0,
+            investable_cash=0.0,
+            market_status="🧯 过热降档（SOXX）",
+            deploy_ratio_text="15.0%",
+            income_ratio_text="0.0%",
+            income_locked_ratio_text="0.0%",
+            signal_message="SOXX 仍在 140 日门槛线上方，但触发过热降档，目标仓位 SOXL 15.0%",
+            available_cash=0.0,
+            total_strategy_equity=1000.0,
+            portfolio_rows=(("SOXL", "SOXX"), ("BOXX",)),
+        )
+        refreshed_plan = _build_plan(
+            strategy_symbols=("SOXL", "SOXX", "BOXX"),
+            risk_symbols=("SOXL", "SOXX"),
+            safe_haven_symbols=("BOXX",),
+            targets={"SOXL": 500.0, "SOXX": 0.0, "BOXX": 1000.0},
+            market_values={"SOXL": 0.0, "SOXX": 0.0, "BOXX": 500.0},
+            sellable_quantities={"SOXL": 0, "SOXX": 0, "BOXX": 5},
+            quantities={"SOXL": 0, "SOXX": 0, "BOXX": 5},
+            current_min_trade=100.0,
+            trade_threshold_value=100.0,
+            investable_cash=500.0,
+            market_status="🧯 过热降档（SOXX）",
+            deploy_ratio_text="15.0%",
+            income_ratio_text="0.0%",
+            income_locked_ratio_text="0.0%",
+            signal_message="SOXX 仍在 140 日门槛线上方，但触发过热降档，目标仓位 SOXL 15.0%",
+            available_cash=500.0,
+            total_strategy_equity=1000.0,
+            portfolio_rows=(("SOXL", "SOXX"), ("BOXX",)),
+        )
+        before_sell_snapshot = _build_snapshot(initial_plan, phase="before_cash_sweep")
+        after_sell_snapshot = _build_snapshot(refreshed_plan, phase="after_cash_sweep")
+        sent_messages, observed_snapshots, observed_plan_inputs = self._run_strategy(
+            initial_plan,
+            refreshed_plan=refreshed_plan,
+            portfolio_snapshots=[before_sell_snapshot, after_sell_snapshot],
+            prices={"SOXL.US": 100.0, "SOXX.US": 200.0, "BOXX.US": 100.0},
+            estimate_max_purchase_quantity_value=10,
+        )
+
+        self.assertEqual(observed_snapshots, [before_sell_snapshot, after_sell_snapshot])
+        self.assertEqual(len(observed_plan_inputs), 2)
+        self.assertEqual(len(sent_messages), 1)
+        self.assertIn("BOXX", sent_messages[0])
+        self.assertIn("市价卖出", sent_messages[0])
+        self.assertIn("限价买入", sent_messages[0])
+        self.assertIn("SOXL", sent_messages[0])
+
+    def test_cash_sweep_symbol_can_fund_buy_when_investable_cash_is_positive_but_short(self):
+        initial_plan = _build_plan(
+            strategy_symbols=("SOXL", "SOXX", "BOXX"),
+            risk_symbols=("SOXL", "SOXX"),
+            safe_haven_symbols=("BOXX",),
+            targets={"SOXL": 500.0, "SOXX": 0.0, "BOXX": 1000.0},
+            market_values={"SOXL": 0.0, "SOXX": 0.0, "BOXX": 1000.0},
+            sellable_quantities={"SOXL": 0, "SOXX": 0, "BOXX": 10},
+            quantities={"SOXL": 0, "SOXX": 0, "BOXX": 10},
+            current_min_trade=100.0,
+            trade_threshold_value=100.0,
+            investable_cash=200.0,
+            market_status="🧯 过热降档（SOXX）",
+            deploy_ratio_text="15.0%",
+            income_ratio_text="0.0%",
+            income_locked_ratio_text="0.0%",
+            signal_message="SOXX 仍在 140 日门槛线上方，但触发过热降档，目标仓位 SOXL 15.0%",
+            available_cash=200.0,
+            total_strategy_equity=1000.0,
+            portfolio_rows=(("SOXL", "SOXX"), ("BOXX",)),
+        )
+        refreshed_plan = _build_plan(
+            strategy_symbols=("SOXL", "SOXX", "BOXX"),
+            risk_symbols=("SOXL", "SOXX"),
+            safe_haven_symbols=("BOXX",),
+            targets={"SOXL": 500.0, "SOXX": 0.0, "BOXX": 1000.0},
+            market_values={"SOXL": 0.0, "SOXX": 0.0, "BOXX": 700.0},
+            sellable_quantities={"SOXL": 0, "SOXX": 0, "BOXX": 7},
+            quantities={"SOXL": 0, "SOXX": 0, "BOXX": 7},
+            current_min_trade=100.0,
+            trade_threshold_value=100.0,
+            investable_cash=700.0,
+            market_status="🧯 过热降档（SOXX）",
+            deploy_ratio_text="15.0%",
+            income_ratio_text="0.0%",
+            income_locked_ratio_text="0.0%",
+            signal_message="SOXX 仍在 140 日门槛线上方，但触发过热降档，目标仓位 SOXL 15.0%",
+            available_cash=700.0,
+            total_strategy_equity=1000.0,
+            portfolio_rows=(("SOXL", "SOXX"), ("BOXX",)),
+        )
+        before_sell_snapshot = _build_snapshot(initial_plan, phase="before_cash_sweep_short")
+        after_sell_snapshot = _build_snapshot(refreshed_plan, phase="after_cash_sweep_short")
+        sent_messages, observed_snapshots, observed_plan_inputs = self._run_strategy(
+            initial_plan,
+            refreshed_plan=refreshed_plan,
+            portfolio_snapshots=[before_sell_snapshot, after_sell_snapshot],
+            prices={"SOXL.US": 100.0, "SOXX.US": 200.0, "BOXX.US": 100.0},
+            estimate_max_purchase_quantity_value=10,
+        )
+
+        self.assertEqual(observed_snapshots, [before_sell_snapshot, after_sell_snapshot])
+        self.assertEqual(len(observed_plan_inputs), 2)
+        self.assertEqual(len(sent_messages), 1)
+        self.assertIn("BOXX", sent_messages[0])
+        self.assertIn("市价卖出", sent_messages[0])
+        self.assertIn("限价买入", sent_messages[0])
+        self.assertIn("SOXL", sent_messages[0])
+
+    def test_dry_run_cash_sweep_can_simulate_buy_after_sell_settlement(self):
+        initial_plan = _build_plan(
+            strategy_symbols=("SOXL", "SOXX", "BOXX"),
+            risk_symbols=("SOXL", "SOXX"),
+            safe_haven_symbols=("BOXX",),
+            targets={"SOXL": 500.0, "SOXX": 0.0, "BOXX": 1000.0},
+            market_values={"SOXL": 0.0, "SOXX": 0.0, "BOXX": 1000.0},
+            sellable_quantities={"SOXL": 0, "SOXX": 0, "BOXX": 10},
+            quantities={"SOXL": 0, "SOXX": 0, "BOXX": 10},
+            current_min_trade=100.0,
+            trade_threshold_value=100.0,
+            investable_cash=0.0,
+            market_status="🧯 过热降档（SOXX）",
+            deploy_ratio_text="15.0%",
+            income_ratio_text="0.0%",
+            income_locked_ratio_text="0.0%",
+            signal_message="SOXX 仍在 140 日门槛线上方，但触发过热降档，目标仓位 SOXL 15.0%",
+            available_cash=0.0,
+            total_strategy_equity=1000.0,
+            portfolio_rows=(("SOXL", "SOXX"), ("BOXX",)),
+        )
+
+        sent_messages, _, _ = self._run_strategy(
+            initial_plan,
+            prices={"SOXL.US": 100.0, "SOXX.US": 200.0, "BOXX.US": 100.0},
+            estimate_max_purchase_quantity_value=10,
+            dry_run_only=True,
+        )
+
+        self.assertEqual(len(sent_messages), 1)
+        self.assertIn("🧪 模拟运行模式", sent_messages[0])
+        self.assertIn("🧪 模拟市价卖出 BOXX.US", sent_messages[0])
+        self.assertIn("🧪 模拟限价买入 SOXL.US", sent_messages[0])
+        self.assertNotIn("买入说明", sent_messages[0])
 
     def test_retries_account_refresh_after_sell_until_buying_power_updates(self):
         initial_plan = _build_plan(

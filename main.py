@@ -15,6 +15,8 @@ from application.runtime_broker_adapters import build_runtime_broker_adapters
 from application.runtime_composer import build_runtime_composer
 from application.rebalance_service import run_strategy as run_rebalance_cycle
 from application.runtime_strategy_adapters import build_runtime_strategy_adapters
+from application.longbridge_execution import submit_order
+from application.longbridge_portfolio import fetch_strategy_account_state
 from entrypoints.cloud_run import is_market_open_now
 from runtime_config_support import load_platform_runtime_settings
 from notifications.telegram import build_signal_text, build_strategy_display_name, build_translator
@@ -37,10 +39,8 @@ from quant_platform_kit.longbridge import (
     estimate_max_purchase_quantity,
     fetch_last_price,
     fetch_order_status,
-    fetch_strategy_account_state,
     fetch_token_from_secret,
     refresh_token_if_needed,
-    submit_order,
 )
 from strategy_runtime import load_strategy_runtime
 from decision_mapper import map_strategy_decision_to_plan
@@ -110,6 +110,10 @@ def log_position_snapshot(message):
     print(f"[{ACCOUNT_REGION}] {message}", flush=True)
 
 
+def log_runtime_warning(message):
+    print(f"[{ACCOUNT_REGION}] [warning] {message}", flush=True)
+
+
 BROKER_ADAPTERS = build_runtime_broker_adapters(
     strategy_symbols=tuple(MANAGED_SYMBOLS),
     account_hash=ACCOUNT_PREFIX or ACCOUNT_REGION or "longbridge",
@@ -123,6 +127,7 @@ BROKER_ADAPTERS = build_runtime_broker_adapters(
             if getattr(RUNTIME_SETTINGS, "debug_position_snapshot", False)
             else None
         ),
+        warning_log_fn=log_runtime_warning,
     ),
     submit_order_fn=submit_order,
 )
@@ -144,7 +149,7 @@ STRATEGY_ADAPTERS = build_runtime_strategy_adapters(
 )
 
 
-def build_composer():
+def build_composer(*, dry_run_only_override: bool | None = None):
     return build_runtime_composer(
         project_id=PROJECT_ID,
         secret_name=SECRET_NAME,
@@ -167,6 +172,7 @@ def build_composer():
         order_poll_interval_sec=ORDER_POLL_INTERVAL_SEC,
         order_poll_max_attempts=ORDER_POLL_MAX_ATTEMPTS,
         dry_run_only=RUNTIME_SETTINGS.dry_run_only,
+        dry_run_only_override=dry_run_only_override,
         fractional_limit_buy_fallback_to_market=RUNTIME_SETTINGS.fractional_limit_buy_fallback_to_market,
         broker_adapters=BROKER_ADAPTERS,
         strategy_adapters=STRATEGY_ADAPTERS,
@@ -187,8 +193,8 @@ def build_composer():
     )
 
 
-def run_strategy():
-    composer = build_composer()
+def run_strategy(*, force_run: bool = False, validation_only: bool = False):
+    composer = build_composer(dry_run_only_override=True if validation_only else None)
     reporting_adapters = composer.build_reporting_adapters()
     log_context, report = reporting_adapters.start_run()
     notification_adapters = composer.build_notification_adapters()
@@ -219,7 +225,7 @@ def run_strategy():
                 error_message=str(error),
             )
             print(composer.with_prefix(f"Market hours check failed: {error}"), flush=True)
-        if not market_open:
+        if not market_open and not force_run:
             reporting_adapters.log_event(
                 log_context,
                 "outside_market_hours",
@@ -234,6 +240,18 @@ def run_strategy():
             )
             print(composer.with_prefix("Outside market hours; skip."), flush=True)
             return
+        if force_run and not market_open:
+            reporting_adapters.log_event(
+                log_context,
+                "market_hours_bypassed",
+                message="Market hours bypassed for backfill execution",
+            )
+            print(
+                composer.with_prefix(
+                    "Market hours bypassed for backfill verification; validation only, no orders will be submitted."
+                ),
+                flush=True,
+            )
         run_rebalance_cycle(
             runtime=composer.build_rebalance_runtime(),
             config=composer.build_rebalance_config(strategy_plugin_signals=strategy_plugin_signals),
@@ -277,6 +295,13 @@ def run_strategy():
 def handle_trigger():
     """Entrypoint for Cloud Run / scheduler: run strategy and return 200."""
     run_strategy()
+    return "OK", 200
+
+
+@app.route("/backfill", methods=["POST", "GET"])
+def handle_backfill():
+    """Manual backfill entrypoint for verification-only execution."""
+    run_strategy(force_run=True, validation_only=True)
     return "OK", 200
 
 

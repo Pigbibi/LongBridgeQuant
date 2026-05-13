@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import traceback
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -222,10 +223,12 @@ def execute_rebalance_cycle(
     quantities = dict(portfolio["quantities"])
     sellable_quantities = dict(portfolio["sellable_quantities"])
     target_values = dict(allocation["targets"])
+    cash_sweep_symbol = str(portfolio.get("cash_sweep_symbol") or "").strip().upper()
     available_cash = float(portfolio["liquid_cash"])
     cash_by_currency = _normalize_cash_by_currency(portfolio.get("cash_by_currency"))
     investable_cash = float(execution["investable_cash"])
     current_min_trade = float(execution["current_min_trade"])
+    dry_run_sale_proceeds = 0.0
 
     def append_order_id_suffix(log_message, order_id):
         order_id_text = str(order_id or "").strip()
@@ -311,6 +314,41 @@ def execute_rebalance_cycle(
         print(with_prefix(message), flush=True)
         return True
 
+    def cash_sweep_sale_quantity_to_fund_buy(max_quantity, candidate_symbols):
+        if not cash_sweep_symbol or max_quantity <= 0:
+            return 0
+        cash_sweep_price = safe_quote_last_price(
+            f"{cash_sweep_symbol}.US",
+            market_data_port=market_data_port,
+            notify_issue=notify_issue,
+        )
+        if cash_sweep_price is None or cash_sweep_price <= 0.0:
+            return 0
+        base_buying_power = max(0.0, float(investable_cash))
+        for buy_symbol in candidate_symbols:
+            underweight_value = target_values[buy_symbol] - market_values[buy_symbol]
+            if underweight_value <= threshold_value:
+                continue
+            buy_price = safe_quote_last_price(
+                f"{buy_symbol}.US",
+                market_data_port=market_data_port,
+                notify_issue=notify_issue,
+            )
+            if buy_price is None:
+                continue
+            ask = round(buy_price * limit_buy_premium, 2) if buy_symbol in limit_order_symbols else round(buy_price, 2)
+            max_buy_quantity = int(underweight_value // ask)
+            if max_buy_quantity <= 0:
+                continue
+            required_buying_power = max_buy_quantity * ask
+            if base_buying_power >= required_buying_power:
+                return 0
+            return min(
+                max_quantity,
+                max(1, math.ceil((required_buying_power - base_buying_power) / cash_sweep_price)),
+            )
+        return 0
+
     for symbol in strategy_assets:
         diff = target_values[symbol] - market_values[symbol]
         if diff < -threshold_value and abs(diff) > current_min_trade:
@@ -361,6 +399,8 @@ def execute_rebalance_cycle(
                             round(price, 2),
                             order_type="market",
                         )
+                        if submitted:
+                            dry_run_sale_proceeds += float(quantity) * round(price, 2)
                     else:
                         submitted = submit_order_via_port(
                             f"{symbol}.US",
@@ -373,11 +413,11 @@ def execute_rebalance_cycle(
                 if submitted:
                     action_done = True
                     sell_submitted = True
-            elif sellable_quantities[symbol] <= 0 and quantities[symbol] > 0:
-                record_skip_log(
-                    skip_logs,
-                    translator=translator,
-                    with_prefix=with_prefix,
+                elif sellable_quantities[symbol] <= 0 and quantities[symbol] > 0:
+                    record_skip_log(
+                        skip_logs,
+                        translator=translator,
+                        with_prefix=with_prefix,
                     kind="sell_skipped",
                     detail=(
                         f"Symbol: {symbol}.US Diff: ${abs(diff):.2f} "
@@ -386,38 +426,109 @@ def execute_rebalance_cycle(
                     ),
                 )
 
-    if sell_submitted:
-        previous_investable_cash = investable_cash
-        refresh_attempts = max(1, int(post_sell_refresh_attempts or 1))
-        refresh_interval = max(0.0, float(post_sell_refresh_interval_sec or 0.0))
-        best_refreshed_state = None
-        best_investable_cash = previous_investable_cash
-        for attempt in range(refresh_attempts):
-            if attempt > 0:
-                sleeper(refresh_interval)
-            refreshed_state = fetch_replanned_state()
-            refreshed_execution = refreshed_state[2]
-            refreshed_investable_cash = float(refreshed_execution["investable_cash"])
-            if best_refreshed_state is None or refreshed_investable_cash > best_investable_cash:
-                best_refreshed_state = refreshed_state
-                best_investable_cash = refreshed_investable_cash
-            if refreshed_investable_cash > previous_investable_cash:
-                best_refreshed_state = refreshed_state
-                break
-        plan, portfolio, execution, allocation = best_refreshed_state
-        threshold_value = float(execution["trade_threshold_value"])
-        limit_order_symbols = set(
-            allocation.get("risk_symbols", ()) + allocation.get("income_symbols", ())
+    buy_candidates = [
+        symbol
+        for symbol in strategy_assets
+        if (target_values[symbol] - market_values[symbol]) > threshold_value
+        and abs(target_values[symbol] - market_values[symbol]) > current_min_trade
+    ]
+    funding_buy_candidates = [
+        symbol
+        for symbol in buy_candidates
+        if symbol != cash_sweep_symbol
+    ]
+    if (
+        not sell_submitted
+        and funding_buy_candidates
+        and cash_sweep_symbol
+        and sellable_quantities.get(cash_sweep_symbol, 0.0) > 0.0
+    ):
+        sweep_quantity = cash_sweep_sale_quantity_to_fund_buy(
+            int(sellable_quantities[cash_sweep_symbol]),
+            funding_buy_candidates,
         )
-        strategy_assets = tuple(allocation["strategy_symbols"])
-        market_values = dict(portfolio["market_values"])
-        quantities = dict(portfolio["quantities"])
-        sellable_quantities = dict(portfolio["sellable_quantities"])
-        target_values = dict(allocation["targets"])
-        available_cash = float(portfolio["liquid_cash"])
-        cash_by_currency = _normalize_cash_by_currency(portfolio.get("cash_by_currency"))
-        investable_cash = float(execution["investable_cash"])
-        current_min_trade = float(execution["current_min_trade"])
+        if sweep_quantity > 0:
+            sweep_price = round(
+                float(
+                    safe_quote_last_price(
+                        f"{cash_sweep_symbol}.US",
+                        market_data_port=market_data_port,
+                        notify_issue=notify_issue,
+                    )
+                    or 0.0
+                ),
+                2,
+            )
+            if dry_run_only:
+                submitted = record_dry_run(
+                    f"{cash_sweep_symbol}.US",
+                    "sell",
+                    format_quantity(sweep_quantity),
+                    sweep_price,
+                    order_type="market",
+                )
+                if submitted:
+                    dry_run_sale_proceeds += float(sweep_quantity) * sweep_price
+            else:
+                submitted = submit_order_via_port(
+                    f"{cash_sweep_symbol}.US",
+                    "market",
+                    "sell",
+                    sweep_quantity,
+                    translator(
+                        "market_sell",
+                        symbol=cash_sweep_symbol,
+                        qty=format_quantity(sweep_quantity),
+                        price=sweep_price,
+                    ),
+                )
+            if submitted:
+                action_done = True
+                sell_submitted = True
+
+    if sell_submitted:
+        if dry_run_only and dry_run_sale_proceeds > 0.0:
+            simulated_cash = float(dry_run_sale_proceeds)
+            available_cash = max(0.0, available_cash + simulated_cash)
+            investable_cash = max(0.0, investable_cash + simulated_cash)
+            validation_message = (
+                f"🧪 验证回款已入账: cash=${simulated_cash:.2f} "
+                f"investable=${investable_cash:.2f}"
+            )
+            note_logs.append(validation_message)
+            print(with_prefix(validation_message), flush=True)
+        else:
+            previous_investable_cash = investable_cash
+            refresh_attempts = max(1, int(post_sell_refresh_attempts or 1))
+            refresh_interval = max(0.0, float(post_sell_refresh_interval_sec or 0.0))
+            best_refreshed_state = None
+            best_investable_cash = previous_investable_cash
+            for attempt in range(refresh_attempts):
+                if attempt > 0:
+                    sleeper(refresh_interval)
+                refreshed_state = fetch_replanned_state()
+                refreshed_execution = refreshed_state[2]
+                refreshed_investable_cash = float(refreshed_execution["investable_cash"])
+                if best_refreshed_state is None or refreshed_investable_cash > best_investable_cash:
+                    best_refreshed_state = refreshed_state
+                    best_investable_cash = refreshed_investable_cash
+                if refreshed_investable_cash > previous_investable_cash:
+                    best_refreshed_state = refreshed_state
+                    break
+            plan, portfolio, execution, allocation = best_refreshed_state
+            threshold_value = float(execution["trade_threshold_value"])
+            limit_order_symbols = set(
+                allocation.get("risk_symbols", ()) + allocation.get("income_symbols", ())
+            )
+            strategy_assets = tuple(allocation["strategy_symbols"])
+            market_values = dict(portfolio["market_values"])
+            quantities = dict(portfolio["quantities"])
+            sellable_quantities = dict(portfolio["sellable_quantities"])
+            target_values = dict(allocation["targets"])
+            available_cash = float(portfolio["liquid_cash"])
+            cash_by_currency = _normalize_cash_by_currency(portfolio.get("cash_by_currency"))
+            investable_cash = float(execution["investable_cash"])
+            current_min_trade = float(execution["current_min_trade"])
 
     if (
         available_cash <= 0.0
