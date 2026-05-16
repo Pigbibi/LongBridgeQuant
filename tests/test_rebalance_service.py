@@ -546,7 +546,7 @@ class RebalanceServiceNotificationTests(unittest.TestCase):
         self.assertIn("可投资现金", sent_messages[0])
         self.assertIn("SOXX.US", sent_messages[0])
 
-    def test_fractional_strategy_target_is_skipped_by_whole_share_execution_layer(self):
+    def test_fractional_strategy_target_rebuys_cash_sweep_symbol_after_buy_skip(self):
         plan = _build_plan(
             strategy_symbols=("SOXL", "SOXX", "BOXX"),
             risk_symbols=("SOXL", "SOXX"),
@@ -577,7 +577,9 @@ class RebalanceServiceNotificationTests(unittest.TestCase):
         self.assertIn("🔔 【调仓指令】", sent_messages[0])
         self.assertIn("SOXX.US 目标差额 $163.14", sent_messages[0])
         self.assertIn("不足买入 1 股", sent_messages[0])
-        self.assertIn("市价卖出] BOXX", sent_messages[0])
+        self.assertNotIn("市价卖出] BOXX", sent_messages[0])
+        self.assertNotIn("市价买入] SOXX", sent_messages[0])
+        self.assertIn("市价买入] BOXX: 7股", sent_messages[0])
         self.assertIn("买入说明", sent_messages[0])
         self.assertNotIn("限价买入] SOXX", sent_messages[0])
 
