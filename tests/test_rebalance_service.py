@@ -577,7 +577,8 @@ class RebalanceServiceNotificationTests(unittest.TestCase):
         self.assertIn("🔔 【调仓指令】", sent_messages[0])
         self.assertIn("SOXX.US 目标差额 $163.14", sent_messages[0])
         self.assertIn("不足买入 1 股", sent_messages[0])
-        self.assertIn("尾部回补", sent_messages[0])
+        self.assertIn("市价卖出] BOXX", sent_messages[0])
+        self.assertIn("买入说明", sent_messages[0])
         self.assertNotIn("限价买入] SOXX", sent_messages[0])
 
     def test_fractional_strategy_target_buy_floors_to_cash_backed_whole_shares(self):
